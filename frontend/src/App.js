@@ -129,6 +129,28 @@ function App() {
     }
   };
 
+  const handleDeleteAllFiles = async () => {
+    if (!window.confirm(`Вы уверены, что хотите удалить ВСЕ файлы (${files.length})? Это действие невозможно отменить.`)) return;
+
+    try {
+      const res = await fetch('http://localhost:8000/files', {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Ошибка удаления всех файлов');
+      }
+
+      const data = await res.json();
+      alert(data.message);
+      await fetchFiles(); 
+    } catch (error) {
+      console.error('Ошибка удаления всех файлов:', error);
+      alert('Ошибка удаления всех файлов: ' + error.message);
+    }
+  };
+
   const handleChunkSettingsUpdate = async (e) => {
     e.preventDefault();
     
@@ -155,7 +177,7 @@ function App() {
 
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>📄 PDF Ассистент вопросов и ответов</h1>
+      <h1>Ассистент поиска по документам</h1>
       
       {/* Настройки чанков */}
       <div style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
@@ -267,6 +289,30 @@ function App() {
       {/* Список файлов */}
       <div style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
         <h3>Загруженные файлы ({files.length})</h3>
+        
+        {/* Кнопка удаления всех файлов */}
+        {files.length > 0 && (
+          <div style={{ marginBottom: '1rem' }}>
+            <button
+              onClick={() => handleDeleteAllFiles()}
+              style={{ 
+                background: '#ff4444', 
+                color: 'white', 
+                border: 'none', 
+                padding: '0.5rem 1rem',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: 'bold'
+              }}
+            >
+              🗑️ Удалить все файлы
+            </button>
+            <p style={{ color: '#666', fontSize: '0.9rem', marginTop: '0.5rem' }}>
+              Внимание: это действие удалит все файлы из векторной базы
+            </p>
+          </div>
+        )}
+        
         {files.length === 0 ? (
           <p>PDF файлы еще не загружены.</p>
         ) : (
@@ -302,12 +348,13 @@ function App() {
 
       {/* Вопросы и ответы */}
       <div style={{ padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
-        <h3>Задать вопросы</h3>
+        <h3>Задать вопрос</h3>
+
         <form onSubmit={handleSubmit}>
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Задайте вопрос о ваших загруженных PDF файлах..."
+            placeholder="Задайте вопрос..."
             rows="3"
             style={{ width: '100%', padding: '0.5rem', marginBottom: '1rem' }}
           />
@@ -323,18 +370,20 @@ function App() {
               cursor: files.length === 0 ? 'not-allowed' : 'pointer'
             }}
           >
-            {loading ? 'Думаю...' : 'Задать вопрос'}
+            {loading ? '🧠 Ассистент думает...' : '🧠 Спросить'}
           </button>
           {files.length === 0 && (
             <p style={{ color: '#666', marginTop: '0.5rem' }}>
-              Пожалуйста, загрузите хотя бы один PDF файл для задавания вопросов.
+              Пожалуйста, загрузите хотя бы один файл.
             </p>
           )}
         </form>
 
         {answer && (
           <div style={{ marginTop: '2rem', padding: '1rem', background: '#f0f0f0', borderRadius: '4px' }}>
-            <h3>Ответ:</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0 }}>Ответ AI Агента:</h3>
+            </div>
             <p style={{ whiteSpace: 'pre-wrap' }}>{answer}</p>
           </div>
         )}

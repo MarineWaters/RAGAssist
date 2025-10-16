@@ -3,9 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 
-from main import add_pdf_to_index, query_index, index, get_index_stats, update_chunk_settings
+from main import (
+    add_pdf_to_index, query, get_stats, 
+    update_chunk_settings, delete_file_from_index, delete_all_files_from_index, 
+    uploaded_filenames, get_current_chunk_settings
+)
 
-app = FastAPI(title="PDF RAG API", version="1.0.0")
+app = FastAPI()
 
 origins = [
     "http://localhost:3001",
@@ -22,16 +26,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-uploaded_filenames = []
-
 chunk_settings = {
     "chunk_size": 512,
     "chunk_overlap": 50
 }
 
+class QueryRequest(BaseModel):
+    question: str
+
 @app.on_event("startup")
 async def startup_event():
-    print("🚀 Запуск новой сессии с пустым Qdrant индексом")
+    print("🚀 Запуск системы")
 
 @app.post("/upload")
 async def upload_file(
@@ -54,7 +59,6 @@ async def upload_file(
     try:
         print(f"⚙️ Применение настроек чанков: размер={chunk_size}, перекрытие={chunk_overlap}")
         chunks_added = add_pdf_to_index(contents, file.filename, chunk_size, chunk_overlap)
-        uploaded_filenames.append(file.filename)
         
         update_chunk_settings(chunk_size, chunk_overlap)
         
@@ -75,27 +79,44 @@ async def list_files():
 @app.delete("/files/{filename}")
 async def delete_file(filename: str):
     if filename in uploaded_filenames:
+        success = delete_file_from_index(filename) 
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Не удалось удалить файл '{filename}' из векторной базы")
+        
         uploaded_filenames.remove(filename)
-        return {"message": f"'{filename}' удален из списка сессии"}
+        return {"message": f"'{filename}' полностью удален из системы"}
     else:
         raise HTTPException(status_code=404, detail="Файл не найден в сессии")
 
-class QueryRequest(BaseModel):
-    question: str
+@app.delete("/files")
+async def delete_all_files():
+    try:
+        success = delete_all_files_from_index()
+        if not success:
+            raise HTTPException(status_code=500, detail="Не удалось очистить векторную базу")
+        
+        uploaded_filenames.clear()
+        return {"message": "Все файлы полностью удалены из системы"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка удаления всех файлов: {str(e)}")
 
 @app.post("/query")
 async def ask_question(request: QueryRequest):
     if not uploaded_filenames:
-        raise HTTPException(status_code=400, detail="PDF файлы еще не загружены")
+        raise HTTPException(status_code=400, detail="PDF файлы еще не загружены. Пожалуйста, загрузите PDF файлы перед запросами.")
     
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Вопрос не может быть пустым")
     
     try:
-        answer = query_index(request.question)
-        return {"answer": answer}
+        answer = query(request.question)
+        return {
+            "answer": answer,
+            "files_used": uploaded_filenames
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка запроса: {str(e)}")
+        print(f"❌ Ошибка в API запросе: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка обработки запроса: {str(e)}")
 
 class ChunkSettingsRequest(BaseModel):
     chunk_size: int
@@ -123,21 +144,21 @@ async def update_chunk_settings_api(request: ChunkSettingsRequest):
 
 @app.get("/chunk-settings")
 async def get_chunk_settings():
-    return chunk_settings
+    return get_current_chunk_settings()
 
 @app.get("/health")
 async def health_check():
-    stats = get_index_stats()
+    stats = get_stats()
     return {
         "status": "работает", 
         "files_uploaded": len(uploaded_filenames),
-        "index_stats": stats,
+        "stats": stats,
         "chunk_settings": chunk_settings
     }
 
 @app.get("/stats")
 async def get_stats():
-    stats = get_index_stats()
+    stats = get_stats()
     return {
         "uploaded_files": uploaded_filenames,
         "vector_db_stats": stats,
