@@ -2,13 +2,13 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from main import (
-    add_pdf_to_index, query, delete_file_from_index, delete_all_files_from_index, uploaded_filenames)
+    add_pdf_to_index, query, delete_file_from_index, delete_all_files_from_index, uploaded_filenames, get_unique_filenames_from_qdrant)
 
 app = FastAPI()
 origins = [
     "http://localhost:3001",
     "http://127.0.0.1:3001",
-    "http://localhost:8000", 
+    "http://localhost:8000",
     "http://127.0.0.1:8000",
 ]
 app.add_middleware(
@@ -22,20 +22,17 @@ app.add_middleware(
 class QueryRequest(BaseModel):
     question: str
 
-@app.on_event("startup")
-async def startup_event():
-    print("🚀 Запуск системы")
-
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Разрешены только PDF файлы")
+    if file.filename in uploaded_filenames:
+        raise HTTPException(status_code=400, detail="Файл с таким именем уже существует")
     contents = await file.read()
     if len(contents) == 0:
         raise HTTPException(status_code=400, detail="Загружен пустой файл")
     try:
         chunks_added = add_pdf_to_index(contents, file.filename)
-
         response_data = {
             "message": f"'{file.filename}' успешно обработан",
             "filename": file.filename,
@@ -47,7 +44,11 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.get("/files")
 async def list_files():
-    return {"files": [{"filename": name} for name in uploaded_filenames]}
+    try:
+        uploaded_filenames = get_unique_filenames_from_qdrant()
+        return {"files": [{"filename": name} for name in uploaded_filenames]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving files: {str(e)}")
 
 @app.delete("/files/{filename}")
 async def delete_file(filename: str):

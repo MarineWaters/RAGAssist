@@ -7,18 +7,28 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [files, setFiles] = useState([]);
+  const [loadingFiles, setLoadingFiles] = useState(true);
+  const [filesError, setFilesError] = useState('');
 
   useEffect(() => {
     fetchFiles();
   }, []);
 
   const fetchFiles = async () => {
+    setLoadingFiles(true);
+    setFilesError('');
     try {
       const res = await fetch('http://localhost:8000/files');
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
       const data = await res.json();
       setFiles(data.files || []);
     } catch (error) {
       console.error('Ошибка загрузки файлов:', error);
+      setFilesError('Не удалось загрузить список файлов. Проверьте подключение к серверу.');
+    } finally {
+      setLoadingFiles(false);
     }
   };
 
@@ -119,6 +129,8 @@ function App() {
     }
   };
 
+  
+      //add evaluation check button
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
       <h1>Ассистент поиска по документам</h1>
@@ -138,6 +150,8 @@ function App() {
       {/* Список файлов */}
       <div style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
         <h3>Загруженные файлы ({files.length})</h3>
+        {loadingFiles && <p>📥 Загрузка списка файлов...</p>}
+        {filesError && <p style={{ color: 'red' }}>⚠️ {filesError}</p>}
         {/* Кнопка удаления всех файлов */}
         {files.length > 0 && (
           <div style={{ marginBottom: '1rem' }}>

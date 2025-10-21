@@ -5,6 +5,7 @@ from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.core import VectorStoreIndex, StorageContext, SimpleDirectoryReader, Settings
 from llama_index.core.node_parser import SentenceSplitter
 import qdrant_client
+from evaluator import ragas_check
 from qdrant_client import models
 import requests
 from ollama_getter import ollama_url
@@ -31,7 +32,7 @@ except Exception as e:
     print(f"❌ Ошибка подключения: {e}")
     exit(1)
 
-Settings.llm = Ollama(base_url=OLLAMA_BASE_URL, model=MODEL_NAME, request_timeout=60.0)
+Settings.llm =Ollama(base_url=OLLAMA_BASE_URL, model=MODEL_NAME, request_timeout=60.0)
 Settings.embed_model = HuggingFaceEmbedding(model_name="intfloat/multilingual-e5-base")
 print("✅ Настройки LlamaIndex сконфигурированы")
 
@@ -39,11 +40,6 @@ QDRANT_URL = "http://localhost:6333"
 COLLECTION_NAME = "session_documents"
 
 client = qdrant_client.QdrantClient(url=QDRANT_URL)
-try:
-    client.delete_collection(collection_name=COLLECTION_NAME)
-    print("🧹 Существующая Qdrant коллекция очищена")
-except Exception as e:
-    print(f"ℹ️ Нет существующей коллекции для очистки: {e}")
     
 vector_store = QdrantVectorStore(
     client=client, 
@@ -52,10 +48,36 @@ vector_store = QdrantVectorStore(
 )
 storage_context = StorageContext.from_defaults(vector_store=vector_store)
 index = VectorStoreIndex([], storage_context=storage_context, embed_model=Settings.embed_model)
-print("✅ Новый Qdrant индекс инициализирован (пустой)")
+print("✅ Новый Qdrant индекс инициализирован")
 
 uploaded_filenames = []
-uploaded_documents = []
+
+def get_unique_filenames_from_qdrant():
+    try:
+        all_points = []
+        next_page = None
+        while True:
+            response = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=None,
+                limit=1000,
+                offset=next_page,
+                with_payload=True
+            )
+            all_points.extend(response[0])
+            next_page = response[1]
+            if next_page is None:
+                break
+        unique_names = set()
+        for point in all_points:
+            if 'file_name' in point.payload:
+                unique_names.add(point.payload.get('file_name'))
+        return list(unique_names)
+    except Exception as e:
+        print(f"❌ Невозможно получить список файлов в Qdrant: {e}")
+        return []
+    
+uploaded_filenames = get_unique_filenames_from_qdrant()
 
 def add_pdf_to_index(pdf_bytes: bytes, filename: str):
     global index, storage_context
@@ -88,7 +110,6 @@ def add_pdf_to_index(pdf_bytes: bytes, filename: str):
         for node in nodes:
             if not hasattr(node, 'metadata') or node.metadata is None:
                 node.metadata = {}
-            node.metadata['file_name'] = safe_filename
         if index is None:
             index = VectorStoreIndex(
                 nodes,
@@ -97,7 +118,6 @@ def add_pdf_to_index(pdf_bytes: bytes, filename: str):
         else:
             index.insert_nodes(nodes)
         uploaded_filenames.append(safe_filename)
-        uploaded_documents.extend(documents)
         print(f"✅ Успешно добавлено {len(nodes)} чанков в Qdrant для файла {safe_filename}")
         return len(nodes)
 
@@ -136,7 +156,7 @@ def delete_file_from_index(filename: str):
                 filter=models.Filter(
                     must=[
                         models.FieldCondition(
-                            key="metadata.file_name",
+                            key="file_name",
                             match=models.MatchValue(value=filename))])))
         print(f"✅ Удалены все векторы для файла: {filename}")
         return True
@@ -149,13 +169,13 @@ def delete_all_files_from_index():
     try:
         client.delete_collection(collection_name=COLLECTION_NAME)
         vector_store = QdrantVectorStore(
-            client=client, 
+            client=client,
             collection_name=COLLECTION_NAME,
-            enable_hybrid=True 
+            enable_hybrid=True
         )
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
         index = VectorStoreIndex([], storage_context=storage_context, embed_model=Settings.embed_model)
-        uploaded_documents.clear()
+        uploaded_filenames.clear()
         print("✅ Все файлы удалены из Qdrant, коллекция пересоздана")
         return True
     except Exception as e:
