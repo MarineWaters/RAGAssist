@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from main import (
-    add_pdf_to_index, query, delete_file_from_index, delete_all_files_from_index, uploaded_filenames, get_unique_filenames_from_qdrant)
+    add_document_to_index, query, delete_file_from_index, delete_all_files_from_index, uploaded_filenames, get_unique_filenames_from_qdrant)
 
 app = FastAPI()
 origins = [
@@ -24,15 +24,16 @@ class QueryRequest(BaseModel):
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Разрешены только PDF файлы")
+    allowed_extensions = ['.pdf', '.docx', '.doc', '.odt']
+    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(status_code=400, detail=f"Разрешены только файлы: {', '.join(allowed_extensions)}")
     if file.filename in uploaded_filenames:
         raise HTTPException(status_code=400, detail="Файл с таким именем уже существует")
     contents = await file.read()
     if len(contents) == 0:
         raise HTTPException(status_code=400, detail="Загружен пустой файл")
     try:
-        chunks_added = add_pdf_to_index(contents, file.filename)
+        chunks_added = add_document_to_index(contents, file.filename)
         response_data = {
             "message": f"'{file.filename}' успешно обработан",
             "filename": file.filename,
@@ -40,7 +41,7 @@ async def upload_file(file: UploadFile = File(...)):
         }
         return response_data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка обработки PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка обработки: {str(e)}")
 
 @app.get("/files")
 async def list_files():
@@ -75,7 +76,7 @@ async def delete_all_files():
 @app.post("/query")
 async def ask_question(request: QueryRequest):
     if not uploaded_filenames:
-        raise HTTPException(status_code=400, detail="PDF файлы еще не загружены. Пожалуйста, загрузите PDF файлы перед запросами.")
+        raise HTTPException(status_code=400, detail="Документы еще не загружены. Пожалуйста, загрузите документы перед запросами.")
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Вопрос не может быть пустым")
     try:

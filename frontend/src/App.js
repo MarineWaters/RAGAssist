@@ -61,8 +61,11 @@ function App() {
     const file = e.target.files[0];
     if (!file) 
       return;
-    if (file.type !== 'application/pdf') {
-      alert('Пожалуйста, загружайте только PDF файлы');
+    if (file.type !== 'application/pdf' && 
+    file.type !== 'application/vnd.oasis.opendocument.text' && 
+    file.type !== 'application/msword' && 
+    file.type !== 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      alert('Пожалуйста, загружайте только pdf, doc, docx, odt файлы');
       return;
     }
     setUploading(true);
@@ -130,16 +133,15 @@ function App() {
   };
 
   
-      //add evaluation check button
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
       <h1>Ассистент поиска по документам</h1>
       {/* Загрузка файлов */}
       <div style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
-        <h3>Загрузить PDF файлы</h3>
+        <h3>Загрузить файлы</h3>
         <input
           type="file"
-          accept=".pdf"
+          accept=".pdf, .odt, .doc, .docx"
           onChange={handleFileUpload}
           disabled={uploading}
           style={{ marginBottom: '1rem' }}
@@ -176,7 +178,7 @@ function App() {
         )}
         
         {files.length === 0 ? (
-          <p>PDF файлы ещё не загружены.</p>
+          <p>Файлы ещё не загружены.</p>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0 }}>
             {files.map((file, index) => (
