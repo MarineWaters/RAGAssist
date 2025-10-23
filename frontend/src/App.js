@@ -7,56 +7,46 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [files, setFiles] = useState([]);
-  const [chunkSettings, setChunkSettings] = useState({
-    chunk_size: 512,
-    chunk_overlap: 50
-  });
-  const [showChunkSettings, setShowChunkSettings] = useState(false);
+  const [loadingFiles, setLoadingFiles] = useState(true);
+  const [filesError, setFilesError] = useState('');
 
   useEffect(() => {
     fetchFiles();
-    fetchChunkSettings();
   }, []);
 
   const fetchFiles = async () => {
+    setLoadingFiles(true);
+    setFilesError('');
     try {
       const res = await fetch('http://localhost:8000/files');
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
       const data = await res.json();
       setFiles(data.files || []);
     } catch (error) {
       console.error('Ошибка загрузки файлов:', error);
-    }
-  };
-
-  const fetchChunkSettings = async () => {
-    try {
-      const res = await fetch('http://localhost:8000/chunk-settings');
-      const data = await res.json();
-      setChunkSettings(data);
-    } catch (error) {
-      console.error('Ошибка загрузки настроек чанков:', error);
+      setFilesError('Не удалось загрузить список файлов. Проверьте подключение к серверу.');
+    } finally {
+      setLoadingFiles(false);
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!question.trim()) return;
-
     setLoading(true);
     setAnswer('');
-
     try {
       const res = await fetch('http://localhost:8000/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question }),
       });
-
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || 'Не удалось получить ответ');
       }
-
       const data = await res.json();
       setAnswer(data.answer);
     } catch (error) {
@@ -69,36 +59,29 @@ function App() {
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
-    if (!file) return;
-
+    if (!file) 
+      return;
     if (file.type !== 'application/pdf') {
       alert('Пожалуйста, загружайте только PDF файлы');
       return;
     }
-
     setUploading(true);
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('chunk_size', chunkSettings.chunk_size); 
-    formData.append('chunk_overlap', chunkSettings.chunk_overlap); 
-
     try {
       const url = 'http://localhost:8000/upload';
-      
       const res = await fetch(url, {
         method: 'POST',
         body: formData, 
       });
-
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || 'Ошибка загрузки');
       }
-
       const data = await res.json();
-      alert(`${data.message}\nДобавлено чанков: ${data.chunks_added}\nРазмер чанка: ${data.chunk_size}\nПерекрытие: ${data.chunk_overlap}`);
-      await fetchFiles(); 
-      e.target.value = ''; 
+      alert(`${data.message}\nДобавлено чанков: ${data.chunks_added}`);
+      await fetchFiles();
+      e.target.value = '';
     } catch (error) {
       console.error('Ошибка загрузки:', error);
       alert('Ошибка загрузки: ' + error.message);
@@ -108,18 +91,16 @@ function App() {
   };
 
   const handleDeleteFile = async (filename) => {
-    if (!window.confirm(`Вы уверены, что хотите удалить "${filename}"?`)) return;
-
+    if (!window.confirm(`Вы уверены, что хотите удалить "${filename}"?`)) 
+      return;
     try {
       const res = await fetch(`http://localhost:8000/files/${encodeURIComponent(filename)}`, {
         method: 'DELETE',
       });
-
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || 'Ошибка удаления');
       }
-
       const data = await res.json();
       alert(data.message);
       await fetchFiles(); 
@@ -130,18 +111,15 @@ function App() {
   };
 
   const handleDeleteAllFiles = async () => {
-    if (!window.confirm(`Вы уверены, что хотите удалить ВСЕ файлы (${files.length})? Это действие невозможно отменить.`)) return;
-
+    if (!window.confirm(`Вы уверены, что хотите удалить ВСЕ файлы (${files.length})?`)) return;
     try {
       const res = await fetch('http://localhost:8000/files', {
         method: 'DELETE',
       });
-
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || 'Ошибка удаления всех файлов');
       }
-
       const data = await res.json();
       alert(data.message);
       await fetchFiles(); 
@@ -151,131 +129,14 @@ function App() {
     }
   };
 
-  const handleChunkSettingsUpdate = async (e) => {
-    e.preventDefault();
-    
-    try {
-      const res = await fetch('http://localhost:8000/chunk-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(chunkSettings),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Ошибка обновления настроек');
-      }
-
-      const data = await res.json();
-      alert(`✅ ${data.message}\nНовый размер чанка: ${data.chunk_size}\nНовое перекрытие: ${data.chunk_overlap}`);
-      setShowChunkSettings(false);
-    } catch (error) {
-      console.error('Ошибка обновления настроек:', error);
-      alert('Ошибка обновления настроек: ' + error.message);
-    }
-  };
-
+  
+      //add evaluation check button
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
       <h1>Ассистент поиска по документам</h1>
-      
-      {/* Настройки чанков */}
-      <div style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0 }}>Настройки разделения текста</h3>
-          <button
-            onClick={() => setShowChunkSettings(!showChunkSettings)}
-            style={{
-              background: '#28a745',
-              color: 'white',
-              border: 'none',
-              padding: '0.5rem 1rem',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            {showChunkSettings ? 'Скрыть настройки' : 'Показать настройки'}
-          </button>
-        </div>
-
-        {showChunkSettings && (
-          <form onSubmit={handleChunkSettingsUpdate}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Размер чанка (100-2000):
-                </label>
-                <input
-                  type="number"
-                  min="100"
-                  max="2000"
-                  value={chunkSettings.chunk_size}
-                  onChange={(e) => setChunkSettings({
-                    ...chunkSettings,
-                    chunk_size: parseInt(e.target.value) || 512
-                  })}
-                  style={{ width: '100%', padding: '0.5rem', border: '1px solid #ccc', borderRadius: '4px' }}
-                />
-                <small style={{ color: '#666' }}>
-                  Больше = больше контекста, но менее точный поиск
-                </small>
-              </div>
-              
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Перекрытие чанков (0-{chunkSettings.chunk_size - 1}):
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max={chunkSettings.chunk_size - 1}
-                  value={chunkSettings.chunk_overlap}
-                  onChange={(e) => setChunkSettings({
-                    ...chunkSettings,
-                    chunk_overlap: parseInt(e.target.value) || 50
-                  })}
-                  style={{ width: '100%', padding: '0.5rem', border: '1px solid #ccc', borderRadius: '4px' }}
-                />
-                <small style={{ color: '#666' }}>
-                  Больше = лучше сохранение контекста между чанками
-                </small>
-              </div>
-            </div>
-            
-            <div style={{ 
-              padding: '1rem', 
-              background: '#f8f9fa', 
-              borderRadius: '4px',
-              marginBottom: '1rem'
-            }}>
-              <strong>Текущие настройки:</strong><br />
-              📏 Размер чанка: <strong>{chunkSettings.chunk_size}</strong> символов<br />
-              🔄 Перекрытие: <strong>{chunkSettings.chunk_overlap}</strong> символов
-            </div>
-            
-            <button
-              type="submit"
-              style={{
-                background: '#007bff',
-                color: 'white',
-                border: 'none',
-                padding: '0.5rem 1rem',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
-            >
-              💾 Сохранить настройки
-            </button>
-          </form>
-        )}
-      </div>
-
       {/* Загрузка файлов */}
       <div style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
         <h3>Загрузить PDF файлы</h3>
-        <p style={{ color: '#666', marginBottom: '1rem' }}>
-          Файлы будут обработаны с текущими настройками разделения
-        </p>
         <input
           type="file"
           accept=".pdf"
@@ -289,7 +150,8 @@ function App() {
       {/* Список файлов */}
       <div style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
         <h3>Загруженные файлы ({files.length})</h3>
-        
+        {loadingFiles && <p>📥 Загрузка списка файлов...</p>}
+        {filesError && <p style={{ color: 'red' }}>⚠️ {filesError}</p>}
         {/* Кнопка удаления всех файлов */}
         {files.length > 0 && (
           <div style={{ marginBottom: '1rem' }}>
@@ -314,7 +176,7 @@ function App() {
         )}
         
         {files.length === 0 ? (
-          <p>PDF файлы еще не загружены.</p>
+          <p>PDF файлы ещё не загружены.</p>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0 }}>
             {files.map((file, index) => (
@@ -349,14 +211,13 @@ function App() {
       {/* Вопросы и ответы */}
       <div style={{ padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
         <h3>Задать вопрос</h3>
-
         <form onSubmit={handleSubmit}>
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="Задайте вопрос..."
             rows="3"
-            style={{ width: '100%', padding: '0.5rem', marginBottom: '1rem' }}
+            style={{ width: '99%', padding: '0.5rem', marginBottom: '1rem' }}
           />
           <button
             type="submit"
@@ -378,11 +239,10 @@ function App() {
             </p>
           )}
         </form>
-
         {answer && (
           <div style={{ marginTop: '2rem', padding: '1rem', background: '#f0f0f0', borderRadius: '4px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-              <h3 style={{ margin: 0 }}>Ответ AI Агента:</h3>
+              <h3 style={{ margin: 0 }}>Ответ ассистента:</h3>
             </div>
             <p style={{ whiteSpace: 'pre-wrap' }}>{answer}</p>
           </div>
