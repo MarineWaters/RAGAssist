@@ -2,10 +2,15 @@ import tempfile
 from llama_index.llms.ollama import Ollama
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.core import VectorStoreIndex, StorageContext, SimpleDirectoryReader, Settings
+from llama_index.core import VectorStoreIndex, StorageContext, SimpleDirectoryReader, Settings, SimpleKeywordTableIndex, PromptTemplate
 from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.indices.query.query_transform.base import HyDEQueryTransform
+from llama_index.core.tools import QueryEngineTool
+from llama_index.core.query_engine import RouterQueryEngine
+from llama_index.core.selectors import LLMMultiSelector
+from llama_index.core.response_synthesizers import TreeSummarize
+from llama_index.core.query_engine import TransformQueryEngine
 import qdrant_client
-from evaluator import ragas_check
 from qdrant_client import models
 import requests
 from ollama_getter import ollama_url
@@ -32,7 +37,7 @@ except Exception as e:
     print(f"❌ Ошибка подключения: {e}")
     exit(1)
 
-Settings.llm =Ollama(base_url=OLLAMA_BASE_URL, model=MODEL_NAME, request_timeout=60.0)
+Settings.llm =Ollama(base_url=OLLAMA_BASE_URL, model=MODEL_NAME)
 Settings.embed_model = HuggingFaceEmbedding(model_name="intfloat/multilingual-e5-base")
 print("✅ Настройки LlamaIndex сконфигурированы")
 
@@ -48,6 +53,8 @@ vector_store = QdrantVectorStore(
 )
 storage_context = StorageContext.from_defaults(vector_store=vector_store)
 index = VectorStoreIndex([], storage_context=storage_context, embed_model=Settings.embed_model)
+keyword_index = SimpleKeywordTableIndex([], storage_context=storage_context, llm=Settings.llm)
+
 print("✅ Новый Qdrant индекс инициализирован")
 
 uploaded_filenames = []
@@ -79,9 +86,9 @@ def get_unique_filenames_from_qdrant():
     
 uploaded_filenames = get_unique_filenames_from_qdrant()
 
-def add_pdf_to_index(pdf_bytes: bytes, filename: str):
-    global index, storage_context
-    file_size = len(pdf_bytes)
+def add_document_to_index(doc_bytes: bytes, filename: str):
+    global index, storage_context, keyword_index
+    file_size = len(doc_bytes)
     if file_size > 1048576: #1MB
         chunk_size = 2048
         chunk_overlap = 200
@@ -95,8 +102,8 @@ def add_pdf_to_index(pdf_bytes: bytes, filename: str):
         safe_filename = filename.encode('utf-8', errors='ignore').decode('utf-8')
         filepath = Path(tmpdir) / safe_filename
         with open(filepath, "wb") as f:
-            f.write(pdf_bytes)
-        print(f"📖 Загрузка PDF: {safe_filename}")
+            f.write(doc_bytes)
+        print(f"📖 Загрузка документа: {safe_filename}")
         documents = SimpleDirectoryReader(
             input_files=[str(filepath)]
         ).load_data()
@@ -107,6 +114,7 @@ def add_pdf_to_index(pdf_bytes: bytes, filename: str):
             chunk_overlap=chunk_overlap,
         )
         nodes = parser.get_nodes_from_documents(documents)
+        storage_context.docstore.add_documents(nodes) #new
         for node in nodes:
             if not hasattr(node, 'metadata') or node.metadata is None:
                 node.metadata = {}
@@ -117,28 +125,80 @@ def add_pdf_to_index(pdf_bytes: bytes, filename: str):
                 embed_model=Settings.embed_model)
         else:
             index.insert_nodes(nodes)
+        if keyword_index is None:
+            keyword_index = SimpleKeywordTableIndex(
+                nodes, 
+                storage_context=storage_context, 
+                llm=Settings.llm)
+        else:
+            keyword_index.insert_nodes(nodes)
         uploaded_filenames.append(safe_filename)
         print(f"✅ Успешно добавлено {len(nodes)} чанков в Qdrant для файла {safe_filename}")
         return len(nodes)
 
 def query(question: str):
     if not uploaded_filenames:
-        raise ValueError("PDF файлы еще не загружены. Пожалуйста, загрузите PDF файлы перед запросами.")
+        raise ValueError("Файлы еще не загружены. Пожалуйста, загрузите файлы перед запросами.")
     if not question.strip():
         raise ValueError("Вопрос не может быть пустым")
     print(f"🔍 Обработка запроса: {question}")
     try:
-        query_engine = index.as_query_engine(
+        QA_PROMPT = PromptTemplate(
+            "Context information is below.\n"
+            "---------------------\n"
+            "{context_str}\n"
+            "---------------------\n"
+            "Given the context information and not prior knowledge, "
+            "answer the question comprehensively but shortly. If the answer is not in the context, inform "
+            "the user that you can't answer the question - DO NOT MAKE UP AN ANSWER.\n"
+            "Answer in russian.\n"
+            "Question: {query_str}\n"
+            "Answer: "
+        )
+        vector_query_engine = index.as_query_engine(
             response_mode="compact",
-            similarity_top_k=5
+            similarity_top_k=7,
+            text_qa_template=QA_PROMPT
         )
-        enhanced_question = (
-            "Ответь на вопрос, используя ТОЛЬКО информацию из загруженных документов. "
-            "Если точный ответ не содержится в документах, напиши: "
-            "'Информация по этому вопросу отсутствует в документах.'\n\n"
-            f"Вопрос: {question}"
+        keyword_query_engine = keyword_index.as_query_engine(
+            text_qa_template=QA_PROMPT,
+            response_mode="compact",
+            similarity_top_k=7,
         )
-        response = query_engine.query(enhanced_question)
+        hyde_query_engine = TransformQueryEngine(vector_query_engine, HyDEQueryTransform(include_original=True))
+        keyword_tool = QueryEngineTool.from_defaults(
+            query_engine=keyword_query_engine,
+            description="Useful for answering questions about this document. Searches matches by keywords.",
+        )
+        vector_tool = QueryEngineTool.from_defaults(
+            query_engine=vector_query_engine,
+            description="Useful for answering questions about this document. Semantic search with embeddings.",
+        )
+        hyde_tool = QueryEngineTool.from_defaults(
+            query_engine=hyde_query_engine,
+            description="Useful for answering questions about this document. Search by matching to assumed answer.",
+        )
+        tree_summarize = TreeSummarize(
+            summary_template=PromptTemplate(
+                "Context information from multiple sources is below. "
+                "\n---------------------\n{context_str}\n---------------------\nGiven"
+                " the information from multiple sources"
+                " and not prior knowledge, answer the question comprehensively. If"
+                " the answer is not in the context, inform the user that you can't answer"
+                " the question. Answer in russian. Provide compact answer. All formatting should be removed. Prefer actual answers to undecided ones. "
+                "\nQuestion: {query_str}\nAnswer: "
+            )
+        )
+        query_engine = RouterQueryEngine(
+            selector=LLMMultiSelector.from_defaults(),
+            query_engine_tools=[
+                keyword_tool,
+                vector_tool,
+                hyde_tool
+            ],
+            summarizer=tree_summarize,
+        )
+        response = query_engine.query(question)
         answer = str(response).strip()
         if not answer or "empty response" in answer.lower() or len(answer) < 5:
             answer = "Информация по этому вопросу отсутствует в документах."
@@ -165,7 +225,7 @@ def delete_file_from_index(filename: str):
         return False
     
 def delete_all_files_from_index():
-    global index, storage_context, vector_store
+    global index, storage_context, vector_store, keyword_index
     try:
         client.delete_collection(collection_name=COLLECTION_NAME)
         vector_store = QdrantVectorStore(
@@ -175,6 +235,7 @@ def delete_all_files_from_index():
         )
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
         index = VectorStoreIndex([], storage_context=storage_context, embed_model=Settings.embed_model)
+        keyword_index = SimpleKeywordTableIndex([], storage_context=storage_context, llm=Settings.llm)
         uploaded_filenames.clear()
         print("✅ Все файлы удалены из Qdrant, коллекция пересоздана")
         return True
