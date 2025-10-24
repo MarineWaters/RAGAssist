@@ -11,6 +11,8 @@ from llama_index.core.selectors import LLMMultiSelector
 from llama_index.core.response_synthesizers import TreeSummarize
 from llama_index.core.query_engine import TransformQueryEngine
 import qdrant_client
+import nest_asyncio
+import re
 from qdrant_client import models
 import requests
 from ollama_getter import ollama_url
@@ -18,6 +20,8 @@ from pathlib import Path
 
 OLLAMA_BASE_URL = ollama_url.rstrip('/')
 MODEL_NAME = "gpt-oss:20b"
+
+nest_asyncio.apply()
 
 print(f"🔗 Проверка подключения к: {OLLAMA_BASE_URL}")
 try:
@@ -136,7 +140,7 @@ def add_document_to_index(doc_bytes: bytes, filename: str):
         print(f"✅ Успешно добавлено {len(nodes)} чанков в Qdrant для файла {safe_filename}")
         return len(nodes)
 
-def query(question: str):
+async def query(question: str, mode: str = "vector"):
     if not uploaded_filenames:
         raise ValueError("Файлы еще не загружены. Пожалуйста, загрузите файлы перед запросами.")
     if not question.strip():
@@ -151,7 +155,9 @@ def query(question: str):
             "Given the context information and not prior knowledge, "
             "answer the question comprehensively but shortly. If the answer is not in the context, inform "
             "the user that you can't answer the question - DO NOT MAKE UP AN ANSWER.\n"
-            "Answer in russian.\n"
+            "Directly citate the text if it's efficient.\n"
+            "Answer in russian. Provide a plain text answer with NO markdown, bold (**), italic (*), "
+            "or any other formatting symbols. Summarize compactly and remove all formatting.\n"
             "Question: {query_str}\n"
             "Answer: "
         )
@@ -168,15 +174,15 @@ def query(question: str):
         hyde_query_engine = TransformQueryEngine(vector_query_engine, HyDEQueryTransform(include_original=True))
         keyword_tool = QueryEngineTool.from_defaults(
             query_engine=keyword_query_engine,
-            description="Useful for answering questions about this document. Searches matches by keywords.",
+            description="Useful for answering questions about documents. Searches matches by keywords.",
         )
         vector_tool = QueryEngineTool.from_defaults(
             query_engine=vector_query_engine,
-            description="Useful for answering questions about this document. Semantic search with embeddings.",
+            description="Useful for answering questions about documents. Simplest semantic search with embeddings.",
         )
         hyde_tool = QueryEngineTool.from_defaults(
             query_engine=hyde_query_engine,
-            description="Useful for answering questions about this document. Search by matching to assumed answer.",
+            description="Useful for answering questions about documents. Search by matching to assumed answer.",
         )
         tree_summarize = TreeSummarize(
             summary_template=PromptTemplate(
@@ -185,21 +191,29 @@ def query(question: str):
                 " the information from multiple sources"
                 " and not prior knowledge, answer the question comprehensively. If"
                 " the answer is not in the context, inform the user that you can't answer"
-                " the question. Answer in russian. Provide compact answer. All formatting should be removed. Prefer actual answers to undecided ones. "
+                " the question. Answer in russian. Provide compact answer by summarizing as much as possible. "
+                "NO markdown, bold (**), italic (*), or any other formatting symbols allowed. Prefer actual answers to undecided ones."
                 "\nQuestion: {query_str}\nAnswer: "
             )
         )
-        query_engine = RouterQueryEngine(
-            selector=LLMMultiSelector.from_defaults(),
-            query_engine_tools=[
-                keyword_tool,
-                vector_tool,
-                hyde_tool
-            ],
-            summarizer=tree_summarize,
-        )
-        response = query_engine.query(question)
+        if mode == "vector":
+            response = vector_query_engine.query(question)
+        else:
+            print('here')
+            query_engine = RouterQueryEngine(
+                selector=LLMMultiSelector.from_defaults(),
+                query_engine_tools=[
+                    keyword_tool,
+                    vector_tool,
+                    hyde_tool
+                ],
+                summarizer=tree_summarize,
+            )
+            response = query_engine.query(question)
         answer = str(response).strip()
+        answer = re.sub(r'\*\*(.*?)\*\*', r'\1', answer)
+        answer = re.sub(r'\*(.*?)\*', r'\1', answer)
+        answer = re.sub(r'\[(.*?)\]', r'\1', answer)
         if not answer or "empty response" in answer.lower() or len(answer) < 5:
             answer = "Информация по этому вопросу отсутствует в документах."
         print(f"✅ Ответ получен")
