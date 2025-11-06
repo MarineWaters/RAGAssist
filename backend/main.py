@@ -11,6 +11,8 @@ from llama_index.core.selectors import LLMMultiSelector
 from llama_index.core.response_synthesizers import TreeSummarize
 from llama_index.core.query_engine import TransformQueryEngine
 import qdrant_client
+import nest_asyncio
+import re
 from qdrant_client import models
 import requests
 from ollama_getter import ollama_url
@@ -18,6 +20,8 @@ from pathlib import Path
 
 OLLAMA_BASE_URL = ollama_url.rstrip('/')
 MODEL_NAME = "gpt-oss:20b"
+
+nest_asyncio.apply()
 
 print(f"🔗 Проверка подключения к: {OLLAMA_BASE_URL}")
 try:
@@ -37,7 +41,7 @@ except Exception as e:
     print(f"❌ Ошибка подключения: {e}")
     exit(1)
 
-Settings.llm =Ollama(base_url=OLLAMA_BASE_URL, model=MODEL_NAME)
+Settings.llm = Ollama(base_url=OLLAMA_BASE_URL, model=MODEL_NAME, request_timeout=300.0)
 Settings.embed_model = HuggingFaceEmbedding(model_name="intfloat/multilingual-e5-base")
 print("✅ Настройки LlamaIndex сконфигурированы")
 
@@ -47,7 +51,7 @@ COLLECTION_NAME = "session_documents"
 client = qdrant_client.QdrantClient(url=QDRANT_URL)
     
 vector_store = QdrantVectorStore(
-    client=client, 
+    client=client,  
     collection_name=COLLECTION_NAME,
     enable_hybrid=True 
 )
@@ -84,7 +88,70 @@ def get_unique_filenames_from_qdrant():
         print(f"❌ Невозможно получить список файлов в Qdrant: {e}")
         return []
     
+def get_query_engine():
+    global index, keyword_index
+    QA_PROMPT = PromptTemplate(
+        "Context information is below.\n"
+        "---------------------\n"
+        "{context_str}\n"
+        "---------------------\n"
+        "Given the context information and not prior knowledge, "
+        "answer the question comprehensively but shortly. If the answer is not in the context, inform "
+        "the user that you can't answer the question - DO NOT MAKE UP AN ANSWER.\n"
+        "Directly citate the text if it's efficient.\n"
+        "Answer in russian. Provide a plain text answer with NO markdown, bold (**), italic (*), "
+        "or any other formatting symbols. Summarize compactly and remove all formatting.\n"
+        "Question: {query_str}\n"
+        "Answer: "
+    )
+    vector_query_engine = index.as_query_engine(
+        response_mode="compact",
+        similarity_top_k=7,
+        text_qa_template=QA_PROMPT
+    )
+    keyword_query_engine = keyword_index.as_query_engine(
+        text_qa_template=QA_PROMPT,
+        response_mode="compact",
+        similarity_top_k=7,
+    )
+    hyde_query_engine = TransformQueryEngine(vector_query_engine, HyDEQueryTransform(include_original=True))
+    keyword_tool = QueryEngineTool.from_defaults(
+        query_engine=keyword_query_engine,
+        description="Useful for answering questions about documents. Searches matches by keywords.",
+    )
+    vector_tool = QueryEngineTool.from_defaults(
+        query_engine=vector_query_engine,
+        description="Useful for answering questions about documents. Simplest semantic search with embeddings.",
+    )
+    hyde_tool = QueryEngineTool.from_defaults(
+        query_engine=hyde_query_engine,
+        description="Useful for answering questions about documents. Search by matching to assumed answer.",
+    )
+    tree_summarize = TreeSummarize(
+        summary_template=PromptTemplate(
+            "Context information from multiple sources is below. "
+            "\n---------------------\n{context_str}\n---------------------\nGiven"
+            " the information from multiple sources"
+            " and not prior knowledge, answer the question comprehensively. If"
+            " the answer is not in the context, inform the user that you can't answer"
+            " the question. Answer in russian. Provide compact answer by summarizing as much as possible. "
+            "NO markdown, bold (**), italic (*), or any other formatting symbols allowed. Prefer actual answers to undecided ones."
+            "\nQuestion: {query_str}\nAnswer: "
+        )
+    )
+    query_engine = RouterQueryEngine(
+            selector=LLMMultiSelector.from_defaults(),
+            query_engine_tools=[
+                keyword_tool,
+                vector_tool,
+                hyde_tool
+            ],
+            summarizer=tree_summarize,
+        )
+    return query_engine, vector_query_engine
+    
 uploaded_filenames = get_unique_filenames_from_qdrant()
+query_engine, vector_query_engine = get_query_engine()
 
 def add_document_to_index(doc_bytes: bytes, filename: str):
     global index, storage_context, keyword_index
@@ -113,8 +180,8 @@ def add_document_to_index(doc_bytes: bytes, filename: str):
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
-        nodes = parser.get_nodes_from_documents(documents)
-        storage_context.docstore.add_documents(nodes) #new
+        nodes = parser.get_nodes_from_documents(documents) 
+        storage_context.docstore.add_documents(nodes) 
         for node in nodes:
             if not hasattr(node, 'metadata') or node.metadata is None:
                 node.metadata = {}
@@ -136,74 +203,27 @@ def add_document_to_index(doc_bytes: bytes, filename: str):
         print(f"✅ Успешно добавлено {len(nodes)} чанков в Qdrant для файла {safe_filename}")
         return len(nodes)
 
-def query(question: str):
+async def query(question: str, mode: str = "vector"):
     if not uploaded_filenames:
         raise ValueError("Файлы еще не загружены. Пожалуйста, загрузите файлы перед запросами.")
     if not question.strip():
         raise ValueError("Вопрос не может быть пустым")
     print(f"🔍 Обработка запроса: {question}")
     try:
-        QA_PROMPT = PromptTemplate(
-            "Context information is below.\n"
-            "---------------------\n"
-            "{context_str}\n"
-            "---------------------\n"
-            "Given the context information and not prior knowledge, "
-            "answer the question comprehensively but shortly. If the answer is not in the context, inform "
-            "the user that you can't answer the question - DO NOT MAKE UP AN ANSWER.\n"
-            "Answer in russian.\n"
-            "Question: {query_str}\n"
-            "Answer: "
-        )
-        vector_query_engine = index.as_query_engine(
-            response_mode="compact",
-            similarity_top_k=7,
-            text_qa_template=QA_PROMPT
-        )
-        keyword_query_engine = keyword_index.as_query_engine(
-            text_qa_template=QA_PROMPT,
-            response_mode="compact",
-            similarity_top_k=7,
-        )
-        hyde_query_engine = TransformQueryEngine(vector_query_engine, HyDEQueryTransform(include_original=True))
-        keyword_tool = QueryEngineTool.from_defaults(
-            query_engine=keyword_query_engine,
-            description="Useful for answering questions about this document. Searches matches by keywords.",
-        )
-        vector_tool = QueryEngineTool.from_defaults(
-            query_engine=vector_query_engine,
-            description="Useful for answering questions about this document. Semantic search with embeddings.",
-        )
-        hyde_tool = QueryEngineTool.from_defaults(
-            query_engine=hyde_query_engine,
-            description="Useful for answering questions about this document. Search by matching to assumed answer.",
-        )
-        tree_summarize = TreeSummarize(
-            summary_template=PromptTemplate(
-                "Context information from multiple sources is below. "
-                "\n---------------------\n{context_str}\n---------------------\nGiven"
-                " the information from multiple sources"
-                " and not prior knowledge, answer the question comprehensively. If"
-                " the answer is not in the context, inform the user that you can't answer"
-                " the question. Answer in russian. Provide compact answer. All formatting should be removed. Prefer actual answers to undecided ones. "
-                "\nQuestion: {query_str}\nAnswer: "
-            )
-        )
-        query_engine = RouterQueryEngine(
-            selector=LLMMultiSelector.from_defaults(),
-            query_engine_tools=[
-                keyword_tool,
-                vector_tool,
-                hyde_tool
-            ],
-            summarizer=tree_summarize,
-        )
-        response = query_engine.query(question)
+        query_engine, vector_query_engine = get_query_engine()
+        if mode == "vector":
+            response = vector_query_engine.query(question)
+        else:
+            response = query_engine.query(question)
+        context_nodes = response.source_nodes if hasattr(response, 'source_nodes') else []
         answer = str(response).strip()
+        answer = re.sub(r'\*\*(.*?)\*\*', r'\1', answer)
+        answer = re.sub(r'\*(.*?)\*', r'\1', answer)
+        answer = re.sub(r'\[(.*?)\]', r'\1', answer)
         if not answer or "empty response" in answer.lower() or len(answer) < 5:
             answer = "Информация по этому вопросу отсутствует в документах."
         print(f"✅ Ответ получен")
-        return answer
+        return answer, context_nodes
     except Exception as e:
         print(f"❌ Ошибка при обработке запроса: {e}")
         raise Exception(f"Ошибка при обработке запроса: {str(e)}")

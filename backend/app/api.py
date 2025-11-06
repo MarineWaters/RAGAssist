@@ -2,7 +2,12 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from main import (
-    add_document_to_index, query, delete_file_from_index, delete_all_files_from_index, uploaded_filenames, get_unique_filenames_from_qdrant)
+    add_document_to_index, query, delete_file_from_index, delete_all_files_from_index, uploaded_filenames, get_unique_filenames_from_qdrant, Settings)
+from llama_index.core import SimpleDirectoryReader, Document
+import tempfile
+from pathlib import Path
+import qdrant_client
+from collections import defaultdict
 
 app = FastAPI()
 origins = [
@@ -21,6 +26,7 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     question: str
+    mode: str = "vector"
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -80,7 +86,7 @@ async def ask_question(request: QueryRequest):
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Вопрос не может быть пустым")
     try:
-        answer = query(request.question)
+        answer, _ = await query(request.question, request.mode)
         return {
             "answer": answer,
             "files_used": uploaded_filenames
