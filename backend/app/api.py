@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from main import (
     add_document_to_index, query, delete_file_from_index, delete_all_files_from_index, uploaded_filenames, get_unique_filenames_from_qdrant, Settings)
-from evaluator import run_evaluation
 from llama_index.core import SimpleDirectoryReader, Document
 import tempfile
 from pathlib import Path
@@ -87,7 +86,7 @@ async def ask_question(request: QueryRequest):
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Вопрос не может быть пустым")
     try:
-        answer = await query(request.question, request.mode)
+        answer, _ = await query(request.question, request.mode)
         return {
             "answer": answer,
             "files_used": uploaded_filenames
@@ -95,49 +94,3 @@ async def ask_question(request: QueryRequest):
     except Exception as e:
         print(f"❌ Ошибка в API запросе: {e}")
         raise HTTPException(status_code=500, detail=f"Ошибка обработки запроса: {str(e)}")
-
-@app.post("/evaluate")
-async def evaluate_ragas():
-    if not uploaded_filenames:
-        raise HTTPException(status_code=400, detail="Документы еще не загружены. Пожалуйста, загрузите документы перед оценкой.")
-    try:
-        documents = []
-        client = qdrant_client.QdrantClient(url="http://localhost:6333")
-        all_points = []
-        next_page = None
-        while True:
-            response = client.scroll(
-                collection_name="session_documents",
-                scroll_filter=None,
-                limit=1000,
-                offset=next_page,
-                with_payload=True,
-                with_vectors=False
-            )
-            all_points.extend(response[0])
-            next_page = response[1]
-            if next_page is None:
-                break
-        file_texts = defaultdict(str)
-        for point in all_points:
-            filename = point.payload.get('file_name', '')
-            text = point.payload.get('text', '')
-            file_texts[filename] += text + " "
-        for filename, text in file_texts.items():
-            documents.append(Document(text=text.strip(), metadata={"filename": filename}))
-
-        if not documents:
-            raise HTTPException(status_code=400, detail="Не удалось извлечь документы для оценки")
-        results = await run_evaluation(
-            llm_model=Settings.llm,
-            llm_embed_model=Settings.embed_model,
-            documents=documents,
-            testset_size=5
-        )
-        return {
-            "message": "Оценка с Ragas завершена",
-            "results": results
-        }
-    except Exception as e:
-        print(f"❌ Ошибка оценки Ragas: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка оценки системы: {str(e)}")

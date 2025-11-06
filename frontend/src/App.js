@@ -13,8 +13,6 @@ function App() {
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [filesError, setFilesError] = useState('');
   const [answerMode, setAnswerMode] = useState('vector');
-  const [evaluationResult, setEvaluationResult] = useState(null);
-  const [evaluating, setEvaluating] = useState(false);
 
   useEffect(() => {
     fetchFiles();
@@ -171,33 +169,6 @@ function App() {
     }
   };
 
-  const handleEvaluateRagas = async () => {
-    if (files.length === 0) {
-      alert('Пожалуйста, загрузите хотя бы один файл для оценки.');
-      return;
-    }
-    setEvaluating(true);
-    setEvaluationResult(null);
-    try {
-      const res = await fetch('http://localhost:8000/evaluate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Ошибка оценки');
-      }
-      const data = await res.json();
-      setEvaluationResult(data.results);
-      alert(data.message);
-    } catch (error) {
-      console.error('Ошибка оценки Ragas:', error);
-      alert('Ошибка оценки Ragas: ' + error.message);
-    } finally {
-      setEvaluating(false);
-    }
-  };
-
   
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
@@ -307,31 +278,6 @@ function App() {
             >
               🗑️ Удалить все файлы
             </button>
-            <button
-              onClick={handleEvaluateRagas}
-              disabled={evaluating}
-              style={{
-                background: evaluating ? '#ccc' : '#28a745',
-                color: 'white',
-                border: 'none',
-                padding: '0.5rem 1rem',
-                borderRadius: '4px',
-                cursor: evaluating ? 'not-allowed' : 'pointer',
-                fontWeight: 'bold',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem'
-              }}
-            >
-              {evaluating ? (
-                <>
-                  <RingLoader size={16} color="white" />
-                  <span>Оцениваю...</span>
-                </>
-              ) : (
-                '📊 Оценить с Ragas'
-              )}
-            </button>
           </div>
         )}
         
@@ -426,65 +372,6 @@ function App() {
               <h3 style={{ margin: 0 }}>Ответ ассистента:</h3>
             </div>
             <p style={{ whiteSpace: 'pre-wrap' }}>{answer}</p>
-          </div>
-        )}
-
-        {/* Результаты оценки Ragas */}
-        {evaluationResult && (
-          <div style={{ marginTop: '2rem', padding: '1rem', background: '#e8f5e8', borderRadius: '4px', border: '2px solid #28a745' }}>
-            <h3 style={{ margin: '0 0 1rem 0', color: '#28a745' }}>📊 Результаты оценки Ragas</h3>
-
-            {/* Общие оценки */}
-            <div style={{ marginBottom: '1rem', padding: '1rem', background: 'white', borderRadius: '4px' }}>
-              <h4 style={{ margin: '0 0 1rem 0' }}>Общие оценки:</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#28a745' }}>
-                    {(evaluationResult.overall_scores?.faithfulness * 100 || 0).toFixed(1)}%
-                  </div>
-                  <div style={{ color: '#666', fontSize: '0.9rem' }}>Faithfulness</div>
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#28a745' }}>
-                    {(evaluationResult.overall_scores?.answer_relevancy * 100 || 0).toFixed(1)}%
-                  </div>
-                  <div style={{ color: '#666', fontSize: '0.9rem' }}>Answer Relevancy</div>
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#28a745' }}>
-                    {(evaluationResult.overall_scores?.context_precision * 100 || 0).toFixed(1)}%
-                  </div>
-                  <div style={{ color: '#666', fontSize: '0.9rem' }}>Context Precision</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Детальные результаты */}
-            {evaluationResult.dataset && evaluationResult.dataset.length > 0 && (
-              <div>
-                <h4 style={{ margin: '1rem 0 0.5rem 0' }}>Детальные результаты по вопросам:</h4>
-                <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-                  {evaluationResult.dataset.map((item, index) => (
-                    <div key={index} style={{ marginBottom: '1rem', padding: '1rem', background: 'white', borderRadius: '4px', border: '1px solid #ddd' }}>
-                      <div style={{ marginBottom: '0.5rem' }}>
-                        <strong>Вопрос {index + 1}:</strong> {item.question}
-                      </div>
-                      <div style={{ marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>
-                        <strong>Ответ системы:</strong> {item.answer}
-                      </div>
-                      <div style={{ marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>
-                        <strong>Эталонный ответ:</strong> {item.ground_truth}
-                      </div>
-                      <div style={{ display: 'flex', gap: '1rem', fontSize: '0.9rem' }}>
-                        <span><strong>Faithfulness:</strong> {(evaluationResult.scores?.faithfulness?.[index] * 100 || 0).toFixed(1)}%</span>
-                        <span><strong>Relevancy:</strong> {(evaluationResult.scores?.answer_relevancy?.[index] * 100 || 0).toFixed(1)}%</span>
-                        <span><strong>Precision:</strong> {(evaluationResult.scores?.context_precision?.[index] * 100 || 0).toFixed(1)}%</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
