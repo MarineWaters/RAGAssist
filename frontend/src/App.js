@@ -13,6 +13,8 @@ function App() {
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [filesError, setFilesError] = useState('');
   const [answerMode, setAnswerMode] = useState('vector');
+  const [enableEvaluation, setEnableEvaluation] = useState(false);
+  const [currentEvaluation, setCurrentEvaluation] = useState(null);
 
   useEffect(() => {
     fetchFiles();
@@ -41,11 +43,16 @@ function App() {
     if (!question.trim()) return;
     setLoading(true);
     setAnswer('');
+    setCurrentEvaluation(null);
     try {
       const res = await fetch('http://localhost:8000/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, mode: answerMode }),
+        body: JSON.stringify({
+          question,
+          mode: answerMode,
+          evaluate: enableEvaluation
+        }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -53,6 +60,9 @@ function App() {
       }
       const data = await res.json();
       setAnswer(data.answer);
+      if (enableEvaluation && data.evaluation) {
+        setCurrentEvaluation(data.evaluation);
+      }
     } catch (error) {
       console.error('Ошибка:', error);
       setAnswer('❌ ' + error.message);
@@ -319,7 +329,7 @@ function App() {
       <div style={{ padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
         <h3>Задать вопрос</h3>
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <input
                 type="checkbox"
@@ -327,6 +337,14 @@ function App() {
                 onChange={(e) => setAnswerMode(e.target.checked ? 'combined' : 'vector')}
               />
               Продвинутый поиск
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={enableEvaluation}
+                onChange={(e) => setEnableEvaluation(e.target.checked)}
+              />
+              Включить оценку качества (RAGAS)
             </label>
           </div>
           <textarea
@@ -372,9 +390,48 @@ function App() {
               <h3 style={{ margin: 0 }}>Ответ ассистента:</h3>
             </div>
             <p style={{ whiteSpace: 'pre-wrap' }}>{answer}</p>
+            {enableEvaluation && currentEvaluation && (
+              <div style={{ marginTop: '1rem', padding: '1rem', background: '#ffffff', borderRadius: '4px', border: '1px solid #ffe36c' }}>
+                <h4 style={{ margin: '0 0 1rem 0', color: '#007bff' }}>📊 Оценка качества ответа (RAGAS)</h4>
+                <div style={{ textAlign: 'center', padding: '0.5rem' }}>
+                    <div style={{ fontSize: '3rem', fontWeight: 'bold', color: '#007bff' }}>
+                      {(currentEvaluation.overall_score * 100).toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: '1.5rem', color: '#007bff' }}>Общий балл</div>
+                  </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'nowrap' }}>
+                  
+                  <div style={{ textAlign: 'center', padding: '0.5rem', flex: '1', minWidth: '160px' }}>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#007bff' }}>
+                      {(currentEvaluation.faithfulness_score * 100).toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: '0.9rem', color: '#007bff' }}>Достоверность</div>
+                  </div>
+                  <div style={{ textAlign: 'center', padding: '0.5rem', flex: '1', minWidth: '160px' }}>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#007bff' }}>
+                      {(currentEvaluation.answer_relevance_score * 100).toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: '0.9rem', color: '#007bff' }}>Релевантность</div>
+                  </div>
+                  <div style={{ textAlign: 'center', padding: '0.5rem', flex: '1', minWidth: '160px' }}>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#007bff' }}>
+                      {(currentEvaluation.context_precision_score * 100).toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: '0.9rem', color: '#007bff' }}>Точность контекста</div>
+                  </div>
+                </div>
+                <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: '#007bff' }}>
+                  <strong>Метрики RAGAS:</strong><br/>
+                  • <strong>Достоверность:</strong> Насколько ответ соответствует контексту<br/>
+                  • <strong>Релевантность:</strong> Насколько ответ отвечает на вопрос<br/>
+                  • <strong>Точность контекста:</strong> Насколько контекст релевантен вопросу<br/>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
+
     </div>
   );
 }

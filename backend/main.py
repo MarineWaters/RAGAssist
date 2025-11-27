@@ -17,6 +17,7 @@ from qdrant_client import models
 import requests
 from ollama_getter import ollama_url
 from pathlib import Path
+from evaluator import evaluate_qa_pair
 
 OLLAMA_BASE_URL = ollama_url.rstrip('/')
 MODEL_NAME = "gpt-oss:20b"
@@ -98,7 +99,7 @@ def get_query_engine():
         "Given the context information and not prior knowledge, "
         "answer the question comprehensively but shortly. If the answer is not in the context, inform "
         "the user that you can't answer the question - DO NOT MAKE UP AN ANSWER.\n"
-        "Directly citate the text if it's efficient.\n"
+        "Directly citate the text if it's efficient. Always provide which file or files the information is from.\n"
         "Answer in russian. Provide a plain text answer with NO markdown, bold (**), italic (*), "
         "or any other formatting symbols. Summarize compactly and remove all formatting.\n"
         "Question: {query_str}\n"
@@ -134,7 +135,7 @@ def get_query_engine():
             " the information from multiple sources"
             " and not prior knowledge, answer the question comprehensively. If"
             " the answer is not in the context, inform the user that you can't answer"
-            " the question. Answer in russian. Provide compact answer by summarizing as much as possible. "
+            " the question. Answer in russian. Provide compact answer by summarizing as much as possible."
             "NO markdown, bold (**), italic (*), or any other formatting symbols allowed. Prefer actual answers to undecided ones."
             "\nQuestion: {query_str}\nAnswer: "
         )
@@ -166,22 +167,21 @@ def add_document_to_index(doc_bytes: bytes, filename: str):
         chunk_size = 512
         chunk_overlap = 50
     with tempfile.TemporaryDirectory() as tmpdir:
-        safe_filename = filename.encode('utf-8', errors='ignore').decode('utf-8')
-        filepath = Path(tmpdir) / safe_filename
+        filepath = Path(tmpdir) / filename
         with open(filepath, "wb") as f:
             f.write(doc_bytes)
-        print(f"📖 Загрузка документа: {safe_filename}")
+        print(f"📖 Загрузка документа: {filename}")
         documents = SimpleDirectoryReader(
             input_files=[str(filepath)]
         ).load_data()
-        print(f"📄 Загружено {len(documents)} документов из {safe_filename}")
+        print(f"📄 Загружено {len(documents)} документов из {filename}")
         print(f"⚙️ Применение настроек чанков: размер={chunk_size}, перекрытие={chunk_overlap}")
         parser = SentenceSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
-        nodes = parser.get_nodes_from_documents(documents) 
-        storage_context.docstore.add_documents(nodes) 
+        nodes = parser.get_nodes_from_documents(documents)
+        storage_context.docstore.add_documents(nodes)
         for node in nodes:
             if not hasattr(node, 'metadata') or node.metadata is None:
                 node.metadata = {}
@@ -199,11 +199,12 @@ def add_document_to_index(doc_bytes: bytes, filename: str):
                 llm=Settings.llm)
         else:
             keyword_index.insert_nodes(nodes)
-        uploaded_filenames.append(safe_filename)
-        print(f"✅ Успешно добавлено {len(nodes)} чанков в Qdrant для файла {safe_filename}")
+        print(nodes)
+        uploaded_filenames.append(filename)
+        print(f"✅ Успешно добавлено {len(nodes)} чанков в Qdrant для файла {filename}")
         return len(nodes)
 
-async def query(question: str, mode: str = "vector"):
+async def query(question: str, mode: str = "vector", evaluate: bool = False):
     if not uploaded_filenames:
         raise ValueError("Файлы еще не загружены. Пожалуйста, загрузите файлы перед запросами.")
     if not question.strip():
@@ -223,7 +224,16 @@ async def query(question: str, mode: str = "vector"):
         if not answer or "empty response" in answer.lower() or len(answer) < 5:
             answer = "Информация по этому вопросу отсутствует в документах."
         print(f"✅ Ответ получен")
-        return answer, context_nodes
+        evaluation_result = None
+        if evaluate and context_nodes:
+            try:
+                contexts = [node.text for node in context_nodes if hasattr(node, 'text')]
+                evaluation_result = await evaluate_qa_pair(question, answer, contexts, Settings)
+                print(f"📊 Оценка RAGAS: {evaluation_result.get('overall_score', 0):.3f}")
+            except Exception as eval_error:
+                print(f"⚠️ Ошибка оценки: {eval_error}")
+        
+        return answer, context_nodes, evaluation_result
     except Exception as e:
         print(f"❌ Ошибка при обработке запроса: {e}")
         raise Exception(f"Ошибка при обработке запроса: {str(e)}")
