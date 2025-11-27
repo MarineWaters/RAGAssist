@@ -391,41 +391,61 @@ function App() {
             </div>
             <p style={{ whiteSpace: 'pre-wrap' }}>{answer}</p>
             {enableEvaluation && currentEvaluation && (
-              <div style={{ marginTop: '1rem', padding: '1rem', background: '#ffffff', borderRadius: '4px', border: '1px solid #ffe36c' }}>
-                <h4 style={{ margin: '0 0 1rem 0', color: '#007bff' }}>📊 Оценка качества ответа (RAGAS)</h4>
-                <div style={{ textAlign: 'center', padding: '0.5rem' }}>
-                    <div style={{ fontSize: '3rem', fontWeight: 'bold', color: '#007bff' }}>
-                      {(currentEvaluation.overall_score * 100).toFixed(1)}%
+              <div style={{ marginTop: '1rem', padding: '1rem', background: '#ffffff', borderRadius: '4px', border: currentEvaluation.error ? '1px solid #ff6b6b' : '1px solid #ffe36c' }}>
+                <h4 style={{ margin: '0 0 1rem 0', color: currentEvaluation.error ? '#ff6b6b' : '#007bff' }}>
+                  📊 {currentEvaluation.error ? 'Ошибка оценки качества' : 'Оценка качества ответа (RAGAS)'}
+                </h4>
+                
+                {currentEvaluation.error ? (
+                  <div style={{ textAlign: 'center', padding: '1rem' }}>
+                    <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>⚠️</div>
+                    <div style={{ color: '#ff6b6b', fontSize: '1.1rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                      Ошибка при проведении оценки
                     </div>
-                    <div style={{ fontSize: '1.5rem', color: '#007bff' }}>Общий балл</div>
-                  </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'nowrap' }}>
-                  
-                  <div style={{ textAlign: 'center', padding: '0.5rem', flex: '1', minWidth: '160px' }}>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#007bff' }}>
-                      {(currentEvaluation.faithfulness_score * 100).toFixed(1)}%
+                    <div style={{ color: '#666', fontSize: '0.9rem' }}>
+                      {currentEvaluation.error_message || 'Не удалось выполнить автоматическую оценку качества ответа'}
                     </div>
-                    <div style={{ fontSize: '0.9rem', color: '#007bff' }}>Достоверность</div>
-                  </div>
-                  <div style={{ textAlign: 'center', padding: '0.5rem', flex: '1', minWidth: '160px' }}>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#007bff' }}>
-                      {(currentEvaluation.answer_relevance_score * 100).toFixed(1)}%
+                    <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: '#999' }}>
+                      Попробуйте задать вопрос повторно или отключите оценку качества
                     </div>
-                    <div style={{ fontSize: '0.9rem', color: '#007bff' }}>Релевантность</div>
                   </div>
-                  <div style={{ textAlign: 'center', padding: '0.5rem', flex: '1', minWidth: '160px' }}>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#007bff' }}>
-                      {(currentEvaluation.context_precision_score * 100).toFixed(1)}%
+                ) : (
+                  <>
+                    <div style={{ textAlign: 'center', padding: '0.5rem' }}>
+                      <div style={{ fontSize: '3rem', fontWeight: 'bold', color: '#007bff' }}>
+                        {(currentEvaluation.overall_score * 100).toFixed(1)}%
+                      </div>
+                      <div style={{ fontSize: '1.5rem', color: '#007bff' }}>Общий балл</div>
                     </div>
-                    <div style={{ fontSize: '0.9rem', color: '#007bff' }}>Точность контекста</div>
-                  </div>
-                </div>
-                <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: '#007bff' }}>
-                  <strong>Метрики RAGAS:</strong><br/>
-                  • <strong>Достоверность:</strong> Насколько ответ соответствует контексту<br/>
-                  • <strong>Релевантность:</strong> Насколько ответ отвечает на вопрос<br/>
-                  • <strong>Точность контекста:</strong> Насколько контекст релевантен вопросу<br/>
-                </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'nowrap' }}>
+                      
+                      <div style={{ textAlign: 'center', padding: '0.5rem', flex: '1', minWidth: '160px' }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#007bff' }}>
+                          {(currentEvaluation.faithfulness_score * 100).toFixed(1)}%
+                        </div>
+                        <div style={{ fontSize: '0.9rem', color: '#007bff' }}>Достоверность</div>
+                      </div>
+                      <div style={{ textAlign: 'center', padding: '0.5rem', flex: '1', minWidth: '160px' }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#007bff' }}>
+                          {(currentEvaluation.answer_relevance_score * 100).toFixed(1)}%
+                        </div>
+                        <div style={{ fontSize: '0.9rem', color: '#007bff' }}>Релевантность</div>
+                      </div>
+                      <div style={{ textAlign: 'center', padding: '0.5rem', flex: '1', minWidth: '160px' }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#007bff' }}>
+                          {(currentEvaluation.context_precision_score * 100).toFixed(1)}%
+                        </div>
+                        <div style={{ fontSize: '0.9rem', color: '#007bff' }}>Точность контекста</div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: '#007bff' }}>
+                      <strong>Метрики RAGAS:</strong><br/>
+                      • <strong>Достоверность:</strong> Насколько ответ соответствует контексту<br/>
+                      • <strong>Релевантность:</strong> Насколько ответ отвечает на вопрос<br/>
+                      • <strong>Точность контекста:</strong> Насколько контекст релевантен вопросу<br/>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>

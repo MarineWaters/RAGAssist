@@ -62,8 +62,6 @@ keyword_index = SimpleKeywordTableIndex([], storage_context=storage_context, llm
 
 print("✅ Новый Qdrant индекс инициализирован")
 
-uploaded_filenames = []
-
 def get_unique_filenames_from_qdrant():
     try:
         all_points = []
@@ -99,7 +97,7 @@ def get_query_engine():
         "Given the context information and not prior knowledge, "
         "answer the question comprehensively but shortly. If the answer is not in the context, inform "
         "the user that you can't answer the question - DO NOT MAKE UP AN ANSWER.\n"
-        "Directly citate the text if it's efficient. Always provide which file or files the information is from.\n"
+        "Directly citate the text if it's efficient. Always provide which document(s) the information is from, but use its normal name, not filename.\n"
         "Answer in russian. Provide a plain text answer with NO markdown, bold (**), italic (*), "
         "or any other formatting symbols. Summarize compactly and remove all formatting.\n"
         "Question: {query_str}\n"
@@ -211,7 +209,6 @@ async def query(question: str, mode: str = "vector", evaluate: bool = False):
         raise ValueError("Вопрос не может быть пустым")
     print(f"🔍 Обработка запроса: {question}")
     try:
-        query_engine, vector_query_engine = get_query_engine()
         if mode == "vector":
             response = vector_query_engine.query(question)
         else:
@@ -221,7 +218,7 @@ async def query(question: str, mode: str = "vector", evaluate: bool = False):
         answer = re.sub(r'\*\*(.*?)\*\*', r'\1', answer)
         answer = re.sub(r'\*(.*?)\*', r'\1', answer)
         answer = re.sub(r'\[(.*?)\]', r'\1', answer)
-        if not answer or "empty response" in answer.lower() or len(answer) < 5:
+        if not answer or any(pattern in answer.lower() for pattern in ["не могу", "нет в доку", "нет сведе", "на вопрос не", "нет данных", "невозможно "]):
             answer = "Информация по этому вопросу отсутствует в документах."
         print(f"✅ Ответ получен")
         evaluation_result = None
@@ -229,10 +226,20 @@ async def query(question: str, mode: str = "vector", evaluate: bool = False):
             try:
                 contexts = [node.text for node in context_nodes if hasattr(node, 'text')]
                 evaluation_result = await evaluate_qa_pair(question, answer, contexts, Settings)
-                print(f"📊 Оценка RAGAS: {evaluation_result.get('overall_score', 0):.3f}")
+                if evaluation_result.get('error', False):
+                    print(f"⚠️ {evaluation_result.get('error_message', 'Unknown error')}")
+                else:
+                    print(f"📊 Оценка RAGAS: {evaluation_result.get('overall_score', 0):.3f}")
             except Exception as eval_error:
-                print(f"⚠️ Ошибка оценки: {eval_error}")
-        
+                print(f"⚠️ {eval_error}")
+                evaluation_result = {
+                    'faithfulness_score': 0.0,
+                    'answer_relevance_score': 0.0,
+                    'context_precision_score': 0.0,
+                    'overall_score': 0.0,
+                    'error': True,
+                    'error_message': f'Ошибка оценки: {str(eval_error)}'
+                }
         return answer, context_nodes, evaluation_result
     except Exception as e:
         print(f"❌ Ошибка при обработке запроса: {e}")
